@@ -6,7 +6,7 @@
         🔑
       </div>
       <h2 style="color:#2d3b7a;font-size:28px;margin:0 0 8px;font-weight:700">Set New Password</h2>
-      <p style="color:#666;margin:0;font-size:14px;line-height:1.6">Create a strong password with at least 8 characters.</p>
+      <p style="color:#666;margin:0;font-size:14px;line-height:1.6">Enter your new password below.</p>
     </div>
     
     <?php if (!empty($_SESSION['flash'])): ?>
@@ -22,33 +22,27 @@
     <?php endif; ?>
     
     <form method="POST" action="?page=reset_password_action" id="resetPasswordForm">
-      <input type="hidden" name="token" value="<?php echo htmlspecialchars($_GET['token'] ?? '') ?>" />
+      <div style="background:#f0f9ff;padding:14px 16px;border-radius:10px;margin-bottom:20px;border-left:4px solid #3b82f6">
+        <p style="margin:0;font-size:13px;color:#1e40af">
+          <strong>📧 Email:</strong> <?php echo htmlspecialchars($_SESSION['reset_email'] ?? ''); ?>
+        </p>
+      </div>
       
       <div style="margin-bottom:20px">
         <label style="display:block;margin-bottom:8px;font-weight:600;color:#374151">New Password</label>
-        <input type="password" name="password" id="password" required placeholder="Enter new password" minlength="8"
+        <input type="password" name="password" id="password" required placeholder="Enter new password"
                style="width:100%;padding:14px 16px;border-radius:10px;border:2px solid #e5e7eb;font-size:15px;transition:border-color 0.2s"
                onfocus="this.style.borderColor='#2d3b7a'" onblur="this.style.borderColor='#e5e7eb'"
-               oninput="checkPasswordStrength()" />
-        <div id="passwordStrength" style="margin-top:8px;font-size:13px"></div>
+               oninput="checkPasswordMatch()" />
       </div>
       
       <div style="margin-bottom:24px">
-        <label style="display:block;margin-bottom:8px;font-weight:600;color:#374151">Confirm New Password</label>
-        <input type="password" name="confirm_password" id="confirm_password" required placeholder="Confirm new password" minlength="8"
+        <label style="display:block;margin-bottom:8px;font-weight:600;color:#374151">Confirm Password</label>
+        <input type="password" name="confirm_password" id="confirm_password" required placeholder="Confirm password"
                style="width:100%;padding:14px 16px;border-radius:10px;border:2px solid #e5e7eb;font-size:15px;transition:border-color 0.2s"
                onfocus="this.style.borderColor='#2d3b7a'" onblur="this.style.borderColor='#e5e7eb'"
                oninput="checkPasswordMatch()" />
         <div id="passwordMatch" style="margin-top:8px;font-size:13px"></div>
-      </div>
-      
-      <div style="background:#f3f4f6;padding:16px;border-radius:10px;margin-bottom:24px">
-        <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#374151">Password requirements:</p>
-        <ul style="margin:0;padding-left:20px;font-size:13px;color:#6b7280;line-height:1.8">
-          <li>At least 8 characters long</li>
-          <li>Mix of uppercase and lowercase letters</li>
-          <li>Include numbers and special characters</li>
-        </ul>
       </div>
       
       <button type="submit" id="submitBtn" style="width:100%;background:#2d3b7a;color:#fff;padding:16px;border-radius:12px;border:none;cursor:pointer;font-size:16px;font-weight:700;transition:all 0.2s;box-shadow:0 4px 0 rgba(0,0,0,0.1)">
@@ -65,31 +59,6 @@
 </div>
 
 <script>
-function checkPasswordStrength() {
-  const password = document.getElementById('password').value;
-  const strengthDiv = document.getElementById('passwordStrength');
-  
-  if (password.length === 0) {
-    strengthDiv.innerHTML = '';
-    return;
-  }
-  
-  let strength = 0;
-  if (password.length >= 8) strength++;
-  if (password.length >= 12) strength++;
-  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) strength++;
-  if (/\d/.test(password)) strength++;
-  if (/[^a-zA-Z0-9]/.test(password)) strength++;
-  
-  const colors = ['#dc2626', '#f59e0b', '#10b981', '#059669'];
-  const labels = ['Weak', 'Fair', 'Good', 'Strong'];
-  
-  const level = Math.min(strength - 1, 3);
-  if (level >= 0) {
-    strengthDiv.innerHTML = `<span style="color:${colors[level]};font-weight:600">Password strength: ${labels[level]}</span>`;
-  }
-}
-
 function checkPasswordMatch() {
   const password = document.getElementById('password').value;
   const confirmPassword = document.getElementById('confirm_password').value;
@@ -117,15 +86,9 @@ document.getElementById('resetPasswordForm').addEventListener('submit', function
     return;
   }
   
-  if (password.length < 8) {
-    e.preventDefault();
-    alert('Password must be at least 8 characters long.');
-    return;
-  }
-  
   const btn = document.getElementById('submitBtn');
   btn.disabled = true;
-  btn.innerHTML = 'Updating...';
+  btn.innerHTML = 'Updating Password...';
   btn.style.opacity = '0.6';
 });
 </script>

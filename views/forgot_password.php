@@ -6,7 +6,7 @@
         🔐
       </div>
       <h2 style="color:#2d3b7a;font-size:28px;margin:0 0 8px;font-weight:700">Forgot Password?</h2>
-      <p style="color:#666;margin:0;font-size:14px;line-height:1.6">No worries! Enter your email address below and we'll send you instructions to reset your password.</p>
+      <p style="color:#666;margin:0;font-size:14px;line-height:1.6">No worries! Enter your email address below to reset your password.</p>
     </div>
     
     <?php if (!empty($_SESSION['error'])): ?>
@@ -28,7 +28,7 @@
              onfocus="this.style.borderColor='#2d3b7a'" onblur="this.style.borderColor='#e5e7eb'" />
       
       <button type="submit" id="submitBtn" style="width:100%;background:#2d3b7a;color:#fff;padding:16px;border-radius:12px;border:none;cursor:pointer;font-size:16px;font-weight:700;transition:all 0.2s;box-shadow:0 4px 0 rgba(0,0,0,0.1)">
-        Send Reset Instructions
+        Continue
       </button>
       
       <div style="margin-top:24px;text-align:center;padding-top:20px;border-top:1px solid #e5e7eb">
@@ -44,7 +44,7 @@
 document.getElementById('forgotPasswordForm').addEventListener('submit', function(e) {
   const btn = document.getElementById('submitBtn');
   btn.disabled = true;
-  btn.innerHTML = 'Sending...';
+  btn.innerHTML = 'Verifying...';
   btn.style.opacity = '0.6';
 });
 </script>

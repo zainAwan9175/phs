@@ -46,14 +46,17 @@
               <td style="padding:16px 20px;text-align:center;white-space:nowrap">
                 <?php if ($e['status'] === 'available'): ?>
                   <span style="display:inline-block;background:#7ed957;color:#fff;padding:8px 20px;border-radius:6px;font-weight:600;font-size:14px;margin-right:12px">Available</span>
+                  <a href="?page=booking_request&equipment_id=<?php echo $e['id'] ?>" style="display:inline-block;background:#0b84ff;color:#fff;padding:8px 20px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">Book Now</a>
                 <?php elseif ($e['status'] === 'maintenance'): ?>
                   <span style="display:inline-block;background:#ffa726;color:#fff;padding:8px 20px;border-radius:6px;font-weight:600;font-size:14px;margin-right:12px">Maintenance</span>
-                <?php elseif ($e['status'] === 'in_use'): ?>
-                  <span style="display:inline-block;background:#ff7961;color:#fff;padding:8px 20px;border-radius:6px;font-weight:600;font-size:14px;margin-right:12px">In use</span>
+                  <span style="display:inline-block;background:#e0e0e0;color:#757575;padding:8px 20px;border-radius:6px;font-weight:600;font-size:14px;cursor:not-allowed">Unavailable</span>
+                <?php elseif ($e['status'] === 'in-use' || $e['status'] === 'in_use'): ?>
+                  <span style="display:inline-block;background:#ff7961;color:#fff;padding:8px 20px;border-radius:6px;font-weight:600;font-size:14px;margin-right:12px">In Use</span>
+                  <span style="display:inline-block;background:#e0e0e0;color:#757575;padding:8px 20px;border-radius:6px;font-weight:600;font-size:14px;cursor:not-allowed">Unavailable</span>
                 <?php else: ?>
                   <span style="display:inline-block;background:#9e9e9e;color:#fff;padding:8px 20px;border-radius:6px;font-weight:600;font-size:14px;margin-right:12px"><?php echo ucfirst($e['status']) ?></span>
+                  <span style="display:inline-block;background:#e0e0e0;color:#757575;padding:8px 20px;border-radius:6px;font-weight:600;font-size:14px;cursor:not-allowed">Unavailable</span>
                 <?php endif; ?>
-                <a href="?page=booking_request&equipment_id=<?php echo $e['id'] ?>" style="display:inline-block;background:#0b84ff;color:#fff;padding:8px 20px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">Book Now</a>
               </td>
             </tr>
           <?php endforeach; ?>

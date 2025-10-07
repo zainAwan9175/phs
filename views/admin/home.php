@@ -54,6 +54,24 @@
       <p style="color:#666;margin:0;font-size:13px;text-align:center">Manage lab rules</p>
     </a>
     
+    <!-- Equipment Reports -->
+    <a href="?page=admin_equipment_reports" style="text-decoration:none;background:#fff;padding:32px 24px;border-radius:20px;box-shadow:0 6px 0 rgba(0,0,0,0.08);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;transition:all 0.2s;min-height:160px">
+      <div style="width:70px;height:70px;border-radius:50%;background:linear-gradient(135deg,#11998e 0%,#38ef7d 100%);display:flex;align-items:center;justify-content:center;font-size:32px">
+        📊
+      </div>
+      <h2 style="color:#2d3b7a;margin:0;font-size:18px;font-weight:700;text-align:center">Equipment Reports</h2>
+      <p style="color:#666;margin:0;font-size:13px;text-align:center">View & manage all reports</p>
+    </a>
+    
+    <!-- Maintenance Tasks -->
+    <a href="?page=admin_maintenance_tasks" style="text-decoration:none;background:#fff;padding:32px 24px;border-radius:20px;box-shadow:0 6px 0 rgba(0,0,0,0.08);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;transition:all 0.2s;min-height:160px">
+      <div style="width:70px;height:70px;border-radius:50%;background:linear-gradient(135deg,#ffeaa7 0%,#fdcb6e 100%);display:flex;align-items:center;justify-content:center;font-size:32px">
+        🔧
+      </div>
+      <h2 style="color:#2d3b7a;margin:0;font-size:18px;font-weight:700;text-align:center">Maintenance Tasks</h2>
+      <p style="color:#666;margin:0;font-size:13px;text-align:center">View all maintenance tasks</p>
+    </a>
+    
   </div>
 </div>
 

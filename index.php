@@ -106,10 +106,11 @@ if ($page === 'forgot_password_action' && $_SERVER['REQUEST_METHOD'] === 'POST')
     if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $_SESSION['error'] = 'Please enter a valid email address.';
         redirect('?page=forgot_password');
+        exit;
     }
     
     try {
-        // Check if user exists
+        // Check if user exists and is active
         $stmt = $pdo->prepare('SELECT id, first_name, email FROM users WHERE email = ? AND status = ?');
         $stmt->execute([$email, 'active']);
         $user = $stmt->fetch();
@@ -121,92 +122,101 @@ if ($page === 'forgot_password_action' && $_SERVER['REQUEST_METHOD'] === 'POST')
             $anyUser = $stmt->fetch();
             
             if ($anyUser) {
-                $_SESSION['error'] = 'This account is inactive. Please contact the administrator for assistance.';
+                $_SESSION['error'] = 'This account is inactive. Please contact the administrator.';
                 redirect('?page=forgot_password');
                 exit;
             }
             
-            // For security, don't reveal if email doesn't exist
-            // Show success message anyway
-            $_SESSION['reset_email'] = $email;
-            redirect('?page=forgot_password_sent');
+            // Email doesn't exist
+            $_SESSION['error'] = 'No account found with this email address.';
+            redirect('?page=forgot_password');
             exit;
         }
         
-        // User exists and is active - generate reset token
-        $token = bin2hex(random_bytes(32));
-        $expires = date('Y-m-d H:i:s', strtotime('+1 hour'));
-        
-        // Create password_resets table if not exists
-        $pdo->exec("
-            CREATE TABLE IF NOT EXISTS password_resets (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                user_id INT NOT NULL,
-                token VARCHAR(64) NOT NULL UNIQUE,
-                expires_at DATETIME NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                used TINYINT(1) DEFAULT 0,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                INDEX (token),
-                INDEX (expires_at)
-            )
-        ");
-        
-        // Delete old tokens for this user
-        $stmt = $pdo->prepare('DELETE FROM password_resets WHERE user_id = ?');
-        $stmt->execute([$user['id']]);
-        
-        // Insert new token
-        $stmt = $pdo->prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)');
-        $stmt->execute([$user['id'], $token, $expires]);
-        
-        // In a real application, send email here with reset link
-        // For now, store in session for development
-        $_SESSION['dev_reset_link'] = '?page=reset_password&token=' . $token;
+        // User exists and is active - store email in session and redirect to reset page
         $_SESSION['reset_email'] = $email;
-        
-        // Show confirmation page
-        redirect('?page=forgot_password_sent');
-        
-    } catch (Exception $e) {
-        error_log('Forgot password error: ' . $e->getMessage());
-        $_SESSION['error'] = 'An error occurred while processing your request. Please try again later.';
-        redirect('?page=forgot_password');
-    }
-}
-
-// Forgot Password Sent confirmation page
-if ($page === 'forgot_password_sent') {
-    view('forgot_password_sent');
-    exit;
-}       ");
-        
-        // Delete old expired tokens for this user
-        $stmt = $pdo->prepare('DELETE FROM password_resets WHERE user_id = ? AND (expires_at < NOW() OR used = 1)');
-        $stmt->execute([$user['id']]);
-        
-        // Insert new token
-        $stmt = $pdo->prepare('INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)');
-        $stmt->execute([$user['id'], $token, $expires]);
-        
-        // Log the reset request for security audit
-        $stmt = $pdo->prepare('INSERT INTO audit_logs (actor_id, action, object_type, details) VALUES (?, ?, ?, ?)');
-        $stmt->execute([$user['id'], 'password_reset_requested', 'user', 'Password reset initiated for ' . $user['email']]);
-        
-        // In production, send email with reset link
-        // For development, redirect directly to reset password page
-        $_SESSION['flash'] = 'Password reset link verified! Create your new password below.';
-        redirect('?page=reset_password&token=' . $token);
+        $_SESSION['reset_user_id'] = $user['id'];
+        $_SESSION['success'] = 'Email verified! Please enter your new password below.';
+        redirect('?page=reset_password');
         
     } catch (Exception $e) {
         error_log('Forgot password error: ' . $e->getMessage());
         $_SESSION['error'] = 'An error occurred. Please try again later.';
         redirect('?page=forgot_password');
     }
+    exit;
+}
+
+// Forgot Password Sent confirmation page (for future production use with email)
+if ($page === 'forgot_password_sent') {
+    view('forgot_password_sent');
+    exit;
 }
 
 // Reset Password page
 if ($page === 'reset_password') {
+    // Check if user came from forgot password flow
+    if (!isset($_SESSION['reset_email']) || !isset($_SESSION['reset_user_id'])) {
+        $_SESSION['error'] = 'Please enter your email first to reset your password.';
+        redirect('?page=forgot_password');
+        exit;
+    }
+    
+    // Show reset password form
+    view('reset_password');
+    exit;
+}
+
+// Reset Password Action (update password in database)
+if ($page === 'reset_password_action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Verify session data exists
+    if (!isset($_SESSION['reset_user_id'])) {
+        $_SESSION['error'] = 'Session expired. Please start again.';
+        redirect('?page=forgot_password');
+        exit;
+    }
+    
+    $password = $_POST['password'] ?? '';
+    $confirm_password = $_POST['confirm_password'] ?? '';
+    $user_id = $_SESSION['reset_user_id'];
+    
+    // Simple validation - only check if passwords match
+    if (empty($password) || empty($confirm_password)) {
+        $_SESSION['error'] = 'Please enter password in both fields.';
+        redirect('?page=reset_password');
+        exit;
+    }
+    
+    if ($password !== $confirm_password) {
+        $_SESSION['error'] = 'Passwords do not match.';
+        redirect('?page=reset_password');
+        exit;
+    }
+    
+    try {
+        // Update password in database
+        $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
+        $stmt = $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+        $stmt->execute([$hashedPassword, $user_id]);
+        
+        // Clear session data
+        unset($_SESSION['reset_email']);
+        unset($_SESSION['reset_user_id']);
+        
+        // Success! Redirect to login
+        $_SESSION['success'] = 'Password updated successfully! Sign in with your new password.';
+        redirect('?page=login');
+        
+    } catch (Exception $e) {
+        error_log('Password reset error: ' . $e->getMessage());
+        $_SESSION['error'] = 'Database error. Please try again.';
+        redirect('?page=reset_password');
+    }
+    exit;
+}
+
+// OLD TOKEN-BASED CODE (keeping for reference, will be removed)
+if (false && $page === 'reset_password_old') {
     $token = $_GET['token'] ?? '';
     if (!$token) {
         redirect('?page=login');
@@ -231,90 +241,6 @@ if ($page === 'reset_password') {
 }
 
 // Reset Password action
-if ($page === 'reset_password_action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $token = trim($_POST['token'] ?? '');
-    $password = trim($_POST['password'] ?? '');
-    $confirm_password = trim($_POST['confirm_password'] ?? '');
-    
-    // Validate required fields
-    if (!$token || !$password || !$confirm_password) {
-        $_SESSION['error'] = 'All fields are required.';
-        redirect('?page=reset_password&token=' . urlencode($token));
-    }
-    
-    // Validate passwords match
-    if ($password !== $confirm_password) {
-        $_SESSION['error'] = 'Passwords do not match. Please try again.';
-        redirect('?page=reset_password&token=' . urlencode($token));
-    }
-    
-    // Enhanced password validation
-    if (strlen($password) < 8) {
-        $_SESSION['error'] = 'Password must be at least 8 characters long.';
-        redirect('?page=reset_password&token=' . urlencode($token));
-    }
-    
-    // Check for password complexity
-    if (!preg_match('/[A-Z]/', $password) || !preg_match('/[a-z]/', $password) || !preg_match('/[0-9]/', $password)) {
-        $_SESSION['error'] = 'Password must contain at least one uppercase letter, one lowercase letter, and one number.';
-        redirect('?page=reset_password&token=' . urlencode($token));
-    }
-    
-    try {
-        // Verify token is valid and not used
-        $stmt = $pdo->prepare('SELECT pr.user_id, pr.used, u.email FROM password_resets pr JOIN users u ON pr.user_id = u.id WHERE pr.token = ? AND pr.expires_at > NOW()');
-        $stmt->execute([$token]);
-        $reset = $stmt->fetch();
-        
-        if (!$reset) {
-            $_SESSION['error'] = 'This password reset link has expired or is invalid. Please request a new one.';
-            redirect('?page=forgot_password');
-            exit;
-        }
-        
-        if ($reset['used']) {
-            $_SESSION['error'] = 'This reset link has already been used. Please request a new one if needed.';
-            redirect('?page=forgot_password');
-            exit;
-        }
-        
-        // Check if new password is same as old password (optional security measure)
-        $stmt = $pdo->prepare('SELECT password_hash FROM users WHERE id = ?');
-        $stmt->execute([$reset['user_id']]);
-        $user = $stmt->fetch();
-        
-        if (password_verify($password, $user['password_hash'])) {
-            $_SESSION['error'] = 'New password cannot be the same as your old password.';
-            redirect('?page=reset_password&token=' . urlencode($token));
-            exit;
-        }
-        
-        // Hash the new password
-        $password_hash = password_hash($password, PASSWORD_BCRYPT);
-        
-        // Update password
-        $stmt = $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
-        $stmt->execute([$password_hash, $reset['user_id']]);
-        
-        // Mark token as used instead of deleting (for audit trail)
-        $stmt = $pdo->prepare('UPDATE password_resets SET used = 1 WHERE token = ?');
-        $stmt->execute([$token]);
-        
-        // Log the password change
-        $stmt = $pdo->prepare('INSERT INTO audit_logs (actor_id, action, object_type, details) VALUES (?, ?, ?, ?)');
-        $stmt->execute([$reset['user_id'], 'password_reset_completed', 'user', 'Password successfully reset for ' . $reset['email']]);
-        
-        // Set success message
-        $_SESSION['flash'] = 'Password updated successfully! You can now sign in with your new password.';
-        redirect('?page=login');
-        
-    } catch (Exception $e) {
-        error_log('Reset password error: ' . $e->getMessage());
-        $_SESSION['error'] = 'An error occurred while updating your password. Please try again.';
-        redirect('?page=reset_password&token=' . urlencode($token));
-    }
-}
-
 // Contact page
 if ($page === 'contact') {
     view('contact');
@@ -388,6 +314,15 @@ if ($page === 'booking_request') {
         $stmt->execute([$eid]);
         $equipment = $stmt->fetch();
         if (!$equipment) { echo 'Equipment not found'; exit; }
+        
+        // Block booking if equipment is in maintenance or in-use
+        if (in_array($equipment['status'], ['maintenance', 'in-use', 'in_use'])) {
+            $displayStatus = str_replace(['in-use', 'in_use'], 'In Use', ucfirst($equipment['status']));
+            $_SESSION['flash'] = 'This equipment is currently unavailable for booking (Status: ' . $displayStatus . ').';
+            redirect('?page=labs');
+            exit;
+        }
+        
         view('bookings/request', ['equipment'=>$equipment]);
     } else {
         // No equipment selected, show selection form
@@ -413,6 +348,18 @@ if ($page === 'booking_action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$equipment_id || !$start_date || !$end_date) { 
         $_SESSION['flash'] = 'All fields are required.';
         redirect('?page=booking_request&equipment_id='.$equipment_id);
+    }
+    
+    // Check if equipment is available (not in maintenance or in-use)
+    $stmt = $pdo->prepare('SELECT status FROM equipment WHERE id = ?');
+    $stmt->execute([$equipment_id]);
+    $equipment_status = $stmt->fetchColumn();
+    
+    if (in_array($equipment_status, ['maintenance', 'in-use', 'in_use'])) {
+        $displayStatus = str_replace(['in-use', 'in_use'], 'In Use', ucfirst($equipment_status));
+        $_SESSION['flash'] = 'This equipment is currently unavailable for booking (Status: ' . $displayStatus . ').';
+        redirect('?page=labs');
+        exit;
     }
     
     $ins = $pdo->prepare('INSERT INTO bookings (equipment_id, requester_id, purpose, start_time, end_time, status) VALUES (?,?,?,?,?,?)');
@@ -890,6 +837,145 @@ if ($page === 'admin_rule_delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('?page=admin_rules');
 }
 
+// Admin Equipment Reports - View All
+if ($page === 'admin_equipment_reports') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if ($user['role_name'] !== 'admin') {
+        echo 'Access denied'; exit;
+    }
+    view('admin/equipment_reports');
+    exit;
+}
+
+// Admin Equipment Reports - View Single Report
+if ($page === 'admin_view_equipment_report') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if ($user['role_name'] !== 'admin') {
+        echo 'Access denied'; exit;
+    }
+    $report_id = (int)($_GET['id'] ?? 0);
+    if (!$report_id) redirect('?page=admin_equipment_reports');
+    
+    $stmt = $pdo->prepare("
+        SELECT 
+          er.*,
+          e.name as equipment_name,
+          e.category as equipment_category,
+          l.name as lab_name,
+          m.first_name as manager_first,
+          m.last_name as manager_last,
+          s.first_name as student_first,
+          s.last_name as student_last
+        FROM equipment_reports er
+        JOIN equipment e ON er.equipment_id = e.id
+        JOIN labs l ON e.lab_id = l.id
+        JOIN users m ON er.manager_id = m.id
+        LEFT JOIN users s ON er.student_id = s.id
+        WHERE er.id = ?
+    ");
+    $stmt->execute([$report_id]);
+    $report = $stmt->fetch();
+    
+    if (!$report) {
+        $_SESSION['error'] = 'Report not found.';
+        redirect('?page=admin_equipment_reports');
+    }
+    
+    view('admin/view_equipment_report', ['report' => $report]);
+    exit;
+}
+
+// Admin Equipment Reports - Edit Report Page
+if ($page === 'admin_edit_equipment_report') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if ($user['role_name'] !== 'admin') {
+        echo 'Access denied'; exit;
+    }
+    $report_id = (int)($_GET['id'] ?? 0);
+    if (!$report_id) redirect('?page=admin_equipment_reports');
+    
+    $stmt = $pdo->prepare('SELECT * FROM equipment_reports WHERE id = ?');
+    $stmt->execute([$report_id]);
+    $report = $stmt->fetch();
+    
+    if (!$report) {
+        $_SESSION['error'] = 'Report not found.';
+        redirect('?page=admin_equipment_reports');
+    }
+    
+    view('admin/edit_equipment_report', ['report' => $report]);
+    exit;
+}
+
+// Admin Equipment Reports - Update Report Action
+if ($page === 'admin_update_equipment_report_action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if ($user['role_name'] !== 'admin') {
+        echo 'Access denied'; exit;
+    }
+    
+    $report_id = (int)($_POST['report_id'] ?? 0);
+    $condition_before = trim($_POST['condition_before'] ?? '');
+    $condition_after = trim($_POST['condition_after'] ?? '');
+    $notes = trim($_POST['notes'] ?? '');
+    $booking_date = $_POST['booking_date'] ?: null;
+    $return_date = $_POST['return_date'] ?: null;
+    $status = $_POST['status'] ?? 'pending_return';
+    
+    if (!$report_id || !$condition_before) {
+        $_SESSION['error'] = 'Condition before is required.';
+        redirect('?page=admin_edit_equipment_report&id=' . $report_id);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare('
+            UPDATE equipment_reports 
+            SET condition_before = ?, condition_after = ?, notes = ?, booking_date = ?, return_date = ?, status = ?, updated_at = NOW()
+            WHERE id = ?
+        ');
+        $stmt->execute([
+            $condition_before,
+            $condition_after ?: null,
+            $notes ?: null,
+            $booking_date,
+            $return_date,
+            $status,
+            $report_id
+        ]);
+        
+        $_SESSION['success'] = 'Report updated successfully!';
+        redirect('?page=admin_equipment_reports');
+    } catch (Exception $e) {
+        $_SESSION['error'] = 'Failed to update report: ' . $e->getMessage();
+        redirect('?page=admin_edit_equipment_report&id=' . $report_id);
+    }
+    exit;
+}
+
+// Admin Equipment Reports - Delete Report
+if ($page === 'admin_delete_equipment_report') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if ($user['role_name'] !== 'admin') {
+        echo 'Access denied'; exit;
+    }
+    
+    $report_id = (int)($_GET['id'] ?? 0);
+    if (!$report_id) redirect('?page=admin_equipment_reports');
+    
+    try {
+        $stmt = $pdo->prepare('DELETE FROM equipment_reports WHERE id = ?');
+        $stmt->execute([$report_id]);
+        
+        $_SESSION['success'] = 'Report deleted successfully!';
+    } catch (Exception $e) {
+        $_SESSION['error'] = 'Failed to delete report: ' . $e->getMessage();
+    }
+    
+    redirect('?page=admin_equipment_reports');
+    exit;
+}
+
 // Student dashboard
 if ($page === 'student_dashboard') {
     $user = current_user(); if (!$user) redirect('?page=login'); if (($user['role_name'] ?? '') !== 'student') { echo 'Access denied'; exit; }
@@ -1032,6 +1118,18 @@ if ($page === 'manager_create_maintenance_action' && $_SERVER['REQUEST_METHOD'] 
     }
 }
 
+// Manager view all maintenance tasks
+if ($page === 'manager_maintenance_tasks') {
+    $user = current_user(); if (!$user) redirect('?page=login'); if (($user['role_name'] ?? '') !== 'lab_manager') { echo 'Access denied'; exit; }
+    view('manager/maintenance_tasks'); exit;
+}
+
+// Admin view all maintenance tasks (read-only)
+if ($page === 'admin_maintenance_tasks') {
+    $user = current_user(); if (!$user) redirect('?page=login'); if (!in_array($user['role_name'] ?? '', ['admin'])) { echo 'Access denied'; exit; }
+    view('admin/maintenance_tasks'); exit;
+}
+
 // Manager close maintenance task form
 if ($page === 'manager_close_maintenance') {
     $user = current_user(); if (!$user) redirect('?page=login'); if (($user['role_name'] ?? '') !== 'lab_manager') { echo 'Access denied'; exit; }
@@ -1127,6 +1225,339 @@ if ($page === 'manager_report_issue_action' && $_SERVER['REQUEST_METHOD'] === 'P
         $_SESSION['flash'] = 'Issue report failed: ' . $e->getMessage();
         redirect('?page=manager_report_issue');
     }
+}
+
+// Equipment Reports - View All
+if ($page === 'manager_equipment_reports') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['lab_manager'])) {
+        echo 'Access denied'; exit;
+    }
+    view('manager/equipment_reports');
+    exit;
+}
+
+// Equipment Reports - Add Report Page
+if ($page === 'manager_add_equipment_report') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['lab_manager'])) {
+        echo 'Access denied'; exit;
+    }
+    view('manager/add_equipment_report');
+    exit;
+}
+
+// Equipment Reports - Add Report Action
+if ($page === 'manager_add_equipment_report_action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['lab_manager'])) {
+        echo 'Access denied'; exit;
+    }
+    
+    $equipment_id = (int)($_POST['equipment_id'] ?? 0);
+    $student_id = trim($_POST['student_id'] ?? '');
+    $condition_before = trim($_POST['condition_before'] ?? '');
+    $condition_after = trim($_POST['condition_after'] ?? '');
+    $date_of_issue = $_POST['date_of_issue'] ?? '';
+    $date_of_closing = $_POST['date_of_closing'] ?? '';
+    
+    if (!$equipment_id || !$student_id || !$condition_before || !$condition_after || !$date_of_issue || !$date_of_closing) {
+        $_SESSION['error'] = 'All fields are required.';
+        redirect('?page=manager_add_equipment_report');
+        exit;
+    }
+    
+    try {
+        // Try to find user by ID or email
+        $stmt = $pdo->prepare("SELECT id FROM users WHERE id = ? OR email = ? OR CONCAT(first_name, ' ', last_name) = ?");
+        $stmt->execute([$student_id, $student_id, $student_id]);
+        $student = $stmt->fetch();
+        
+        $final_student_id = $student ? $student['id'] : null;
+        
+        $stmt = $pdo->prepare('
+            INSERT INTO equipment_reports 
+            (equipment_id, manager_id, student_id, condition_before, condition_after, booking_date, return_date, status, created_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ');
+        $stmt->execute([
+            $equipment_id,
+            $user['id'],
+            $final_student_id,
+            $condition_before,
+            $condition_after,
+            $date_of_issue,
+            $date_of_closing,
+            'returned'
+        ]);
+        
+        $_SESSION['success'] = 'Equipment report created successfully!';
+        redirect('?page=manager_equipment_reports');
+    } catch (Exception $e) {
+        $_SESSION['error'] = 'Failed to create report: ' . $e->getMessage();
+        redirect('?page=manager_add_equipment_report');
+    }
+    exit;
+}
+
+// Admin - Add Equipment Report
+if ($page === 'admin_add_equipment_report') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['admin'])) {
+        echo 'Access denied'; exit;
+    }
+    view('admin/add_equipment_report');
+    exit;
+}
+
+// Admin - Add Equipment Report Action
+if ($page === 'admin_add_equipment_report_action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['admin'])) {
+        echo 'Access denied'; exit;
+    }
+    
+    $equipment_id = (int)($_POST['equipment_id'] ?? 0);
+    $student_id = trim($_POST['student_id'] ?? '');
+    $condition_before = trim($_POST['condition_before'] ?? '');
+    $condition_after = trim($_POST['condition_after'] ?? '');
+    $date_of_issue = $_POST['date_of_issue'] ?? '';
+    $date_of_closing = $_POST['date_of_closing'] ?? '';
+    
+    if (!$equipment_id || !$student_id || !$condition_before || !$condition_after || !$date_of_issue || !$date_of_closing) {
+        $_SESSION['error'] = 'All fields are required.';
+        redirect('?page=admin_add_equipment_report');
+        exit;
+    }
+    
+    try {
+        // Try to find user by ID or email
+        $stmt = $pdo->prepare("SELECT id FROM users WHERE id = ? OR email = ? OR CONCAT(first_name, ' ', last_name) = ?");
+        $stmt->execute([$student_id, $student_id, $student_id]);
+        $student = $stmt->fetch();
+        
+        $final_student_id = $student ? $student['id'] : null;
+        
+        $stmt = $pdo->prepare('
+            INSERT INTO equipment_reports 
+            (equipment_id, manager_id, student_id, condition_before, condition_after, booking_date, return_date, status, created_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ');
+        $stmt->execute([
+            $equipment_id,
+            $user['id'],
+            $final_student_id,
+            $condition_before,
+            $condition_after,
+            $date_of_issue,
+            $date_of_closing,
+            'returned'
+        ]);
+        
+        $_SESSION['success'] = 'Equipment report created successfully!';
+        redirect('?page=admin_equipment_reports');
+    } catch (Exception $e) {
+        $_SESSION['error'] = 'Failed to create report: ' . $e->getMessage();
+        redirect('?page=admin_add_equipment_report');
+    }
+    exit;
+}
+
+// Admin - Edit Equipment Report
+if ($page === 'admin_edit_equipment_report') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['admin'])) {
+        echo 'Access denied'; exit;
+    }
+    $report_id = (int)($_GET['id'] ?? 0);
+    if (!$report_id) redirect('?page=admin_equipment_reports');
+    
+    $stmt = $pdo->prepare('SELECT * FROM equipment_reports WHERE id = ?');
+    $stmt->execute([$report_id]);
+    $report = $stmt->fetch();
+    
+    if (!$report) {
+        $_SESSION['error'] = 'Report not found.';
+        redirect('?page=admin_equipment_reports');
+    }
+    
+    view('admin/edit_equipment_report', ['report' => $report]);
+    exit;
+}
+
+// Admin - Update Equipment Report Action
+if ($page === 'admin_update_equipment_report_action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['admin'])) {
+        echo 'Access denied'; exit;
+    }
+    
+    $report_id = (int)($_POST['report_id'] ?? 0);
+    $condition_before = trim($_POST['condition_before'] ?? '');
+    $condition_after = trim($_POST['condition_after'] ?? '');
+    $notes = trim($_POST['notes'] ?? '');
+    $booking_date = $_POST['booking_date'] ?: null;
+    $return_date = $_POST['return_date'] ?: null;
+    $status = $_POST['status'] ?? 'pending_return';
+    
+    if (!$report_id || !$condition_before) {
+        $_SESSION['error'] = 'Condition before is required.';
+        redirect('?page=admin_edit_equipment_report&id=' . $report_id);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare('
+            UPDATE equipment_reports 
+            SET condition_before = ?, condition_after = ?, notes = ?, booking_date = ?, return_date = ?, status = ?, updated_at = NOW()
+            WHERE id = ?
+        ');
+        $stmt->execute([
+            $condition_before,
+            $condition_after ?: null,
+            $notes ?: null,
+            $booking_date,
+            $return_date,
+            $status,
+            $report_id
+        ]);
+        
+        $_SESSION['success'] = 'Report updated successfully!';
+        redirect('?page=admin_equipment_reports');
+    } catch (Exception $e) {
+        $_SESSION['error'] = 'Failed to update report: ' . $e->getMessage();
+        redirect('?page=admin_edit_equipment_report&id=' . $report_id);
+    }
+    exit;
+}
+
+// Equipment Reports - View Single Report
+if ($page === 'manager_view_equipment_report') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['lab_manager'])) {
+        echo 'Access denied'; exit;
+    }
+    $report_id = (int)($_GET['id'] ?? 0);
+    if (!$report_id) redirect('?page=manager_equipment_reports');
+    
+    $stmt = $pdo->prepare("
+        SELECT 
+          er.*,
+          e.name as equipment_name,
+          e.category as equipment_category,
+          l.name as lab_name,
+          m.first_name as manager_first,
+          m.last_name as manager_last,
+          s.first_name as student_first,
+          s.last_name as student_last
+        FROM equipment_reports er
+        JOIN equipment e ON er.equipment_id = e.id
+        JOIN labs l ON e.lab_id = l.id
+        JOIN users m ON er.manager_id = m.id
+        LEFT JOIN users s ON er.student_id = s.id
+        WHERE er.id = ?
+    ");
+    $stmt->execute([$report_id]);
+    $report = $stmt->fetch();
+    
+    if (!$report) {
+        $_SESSION['error'] = 'Report not found.';
+        redirect('?page=manager_equipment_reports');
+    }
+    
+    view('manager/view_equipment_report', ['report' => $report]);
+    exit;
+}
+
+// Equipment Reports - Edit Report Page
+if ($page === 'manager_edit_equipment_report') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['lab_manager'])) {
+        echo 'Access denied'; exit;
+    }
+    $report_id = (int)($_GET['id'] ?? 0);
+    if (!$report_id) redirect('?page=manager_equipment_reports');
+    
+    $stmt = $pdo->prepare('SELECT * FROM equipment_reports WHERE id = ?');
+    $stmt->execute([$report_id]);
+    $report = $stmt->fetch();
+    
+    if (!$report) {
+        $_SESSION['error'] = 'Report not found.';
+        redirect('?page=manager_equipment_reports');
+    }
+    
+    view('manager/edit_equipment_report', ['report' => $report]);
+    exit;
+}
+
+// Equipment Reports - Update Report Action
+if ($page === 'manager_update_equipment_report_action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['lab_manager'])) {
+        echo 'Access denied'; exit;
+    }
+    
+    $report_id = (int)($_POST['report_id'] ?? 0);
+    $condition_before = trim($_POST['condition_before'] ?? '');
+    $condition_after = trim($_POST['condition_after'] ?? '');
+    $notes = trim($_POST['notes'] ?? '');
+    $booking_date = $_POST['booking_date'] ?: null;
+    $return_date = $_POST['return_date'] ?: null;
+    $status = $_POST['status'] ?? 'pending_return';
+    
+    if (!$report_id || !$condition_before) {
+        $_SESSION['error'] = 'Condition before is required.';
+        redirect('?page=manager_edit_equipment_report&id=' . $report_id);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare('
+            UPDATE equipment_reports 
+            SET condition_before = ?, condition_after = ?, notes = ?, booking_date = ?, return_date = ?, status = ?, updated_at = NOW()
+            WHERE id = ?
+        ');
+        $stmt->execute([
+            $condition_before,
+            $condition_after ?: null,
+            $notes ?: null,
+            $booking_date,
+            $return_date,
+            $status,
+            $report_id
+        ]);
+        
+        $_SESSION['success'] = 'Report updated successfully!';
+        redirect('?page=manager_equipment_reports');
+    } catch (Exception $e) {
+        $_SESSION['error'] = 'Failed to update report: ' . $e->getMessage();
+        redirect('?page=manager_edit_equipment_report&id=' . $report_id);
+    }
+    exit;
+}
+
+// Equipment Reports - Delete Report
+if ($page === 'manager_delete_equipment_report') {
+    $user = current_user(); if (!$user) redirect('?page=login');
+    if (!in_array($user['role_name'] ?? '', ['lab_manager'])) {
+        echo 'Access denied'; exit;
+    }
+    
+    $report_id = (int)($_GET['id'] ?? 0);
+    if (!$report_id) redirect('?page=manager_equipment_reports');
+    
+    try {
+        $stmt = $pdo->prepare('DELETE FROM equipment_reports WHERE id = ?');
+        $stmt->execute([$report_id]);
+        
+        $_SESSION['success'] = 'Report deleted successfully!';
+    } catch (Exception $e) {
+        $_SESSION['error'] = 'Failed to delete report: ' . $e->getMessage();
+    }
+    
+    redirect('?page=manager_equipment_reports');
+    exit;
 }
 
 // Student Notifications page
@@ -1273,7 +1704,7 @@ if ($page === 'admin_lab_update' && $_SERVER['REQUEST_METHOD']==='POST') {
 if ($page === 'admin_equipment') {
     $user = current_user();
     if (!$user) redirect('?page=login');
-    if ($user['role_name'] !== 'admin') { echo 'Access denied'; exit; }
+    if (!in_array($user['role_name'] ?? '', ['admin', 'lab_manager'])) { echo 'Access denied'; exit; }
     $labs = $pdo->query('SELECT id, name FROM labs ORDER BY name')->fetchAll();
     $selectedLab = isset($_GET['lab_id']) ? (int)$_GET['lab_id'] : 0;
     if ($selectedLab) {
@@ -1288,7 +1719,7 @@ if ($page === 'admin_equipment') {
 }
 
 if ($page === 'admin_equipment_action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $user = current_user(); if (!$user) redirect('?page=login'); if ($user['role_name'] !== 'admin') { echo 'Denied'; exit; }
+    $user = current_user(); if (!$user) redirect('?page=login'); if (!in_array($user['role_name'] ?? '', ['admin', 'lab_manager'])) { echo 'Denied'; exit; }
     $lab_id = (int)($_POST['lab_id'] ?? 0);
     $equipment_id = trim($_POST['equipment_id'] ?? '');
     $name = trim($_POST['name'] ?? '');
@@ -1304,7 +1735,7 @@ if ($page === 'admin_equipment_action' && $_SERVER['REQUEST_METHOD'] === 'POST')
 
 // Admin equipment edit form
 if ($page === 'admin_equipment_edit' && isset($_GET['id'])) {
-    $user = current_user(); if (!$user) redirect('?page=login'); if ($user['role_name']!=='admin') { echo 'Denied'; exit; }
+    $user = current_user(); if (!$user) redirect('?page=login'); if (!in_array($user['role_name'] ?? '', ['admin', 'lab_manager'])) { echo 'Denied'; exit; }
     $id = (int)$_GET['id'];
     $eq = $pdo->prepare('SELECT * FROM equipment WHERE id = ?'); $eq->execute([$id]); $eq = $eq->fetch();
     $labs = $pdo->query('SELECT id,name FROM labs ORDER BY name')->fetchAll();
@@ -1313,7 +1744,7 @@ if ($page === 'admin_equipment_edit' && isset($_GET['id'])) {
 
 // Admin equipment update
 if ($page === 'admin_equipment_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $user = current_user(); if (!$user) redirect('?page=login'); if ($user['role_name']!=='admin') { echo 'Denied'; exit; }
+    $user = current_user(); if (!$user) redirect('?page=login'); if (!in_array($user['role_name'] ?? '', ['admin', 'lab_manager'])) { echo 'Denied'; exit; }
     $id = (int)($_POST['id'] ?? 0);
     $lab_id = (int)($_POST['lab_id'] ?? 0);
     $name = trim($_POST['name'] ?? ''); $desc = trim($_POST['description'] ?? ''); $status = $_POST['status'] ?? 'available';
@@ -1326,7 +1757,7 @@ if ($page === 'admin_equipment_update' && $_SERVER['REQUEST_METHOD'] === 'POST')
 
 
 if ($page === 'admin_equipment_delete' && isset($_GET['id'])) {
-    $user = current_user(); if (!$user) redirect('?page=login'); if ($user['role_name'] !== 'admin') { echo 'Denied'; exit; }
+    $user = current_user(); if (!$user) redirect('?page=login'); if (!in_array($user['role_name'] ?? '', ['admin', 'lab_manager'])) { echo 'Denied'; exit; }
     $id = (int)$_GET['id'];
     $pdo->prepare('DELETE FROM equipment WHERE id = ?')->execute([$id]);
     $_SESSION['flash']='Equipment removed.'; redirect('?page=admin_equipment');
